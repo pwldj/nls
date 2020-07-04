@@ -1,0 +1,8 @@
+pretrain_data/
+.idea/
+.vscode/
+raw_data/
+squad/
+tf-hub/
+assets/
+__pycache__/

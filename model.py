@@ -5,8 +5,7 @@ import math
 import six
 import numpy as np
 import tensorflow as tf
-import contrib
-
+from tensorflow.contrib import layers as contrib_layers
 
 class ModelConfig(object):
     def __init__(self,

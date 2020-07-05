@@ -6,3 +6,4 @@ squad/
 tf-hub/
 assets/
 __pycache__/
+test.py

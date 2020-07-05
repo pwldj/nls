@@ -1,9 +1,11 @@
 import copy
 import json
+import math
 
 import six
 import numpy as np
-import tensorflow.compat.v1 as tf
+import tensorflow as tf
+import contrib
 
 
 class ModelConfig(object):
@@ -96,10 +98,12 @@ class Model:
         seq_length = input_shape[1]
 
         if input_mask is None:
-            input_mask = tf.ones(shape=[batch_size, seq_length], dtype=tf.int32)
+            input_mask = tf.ones(
+                shape=[batch_size, seq_length], dtype=tf.int32)
 
         if token_type_ids is None:
-            token_type_ids = tf.zeros(shape=[batch_size, seq_length], dtype=tf.int32)
+            token_type_ids = tf.zeros(
+                shape=[batch_size, seq_length], dtype=tf.int32)
 
         with tf.variable_scope(scope, default_name='bert'):
             with tf.variable_scope('embedding'):
@@ -139,7 +143,7 @@ class Model:
                     hidden_dropout_prob=config.hidden_dropout_prob,
                     attention_probs_dropout_prob=config.attention_probs_dropout_prob,
                     initializer_range=config.initializer_range,
-                    do_return_all_layers=True,)
+                    do_return_all_layers=True, )
 
 
 def embedding_lookup(input_ids,
@@ -249,7 +253,8 @@ def embedding_postprocessor(input_tensor,
         # faster for a small vocabulary, unless converting to tflite model.
         if use_one_hot_embeddings:
             flat_token_type_ids = tf.reshape(token_type_ids, [-1])
-            one_hot_ids = tf.one_hot(flat_token_type_ids, depth=token_type_vocab_size)
+            one_hot_ids = tf.one_hot(
+                flat_token_type_ids, depth=token_type_vocab_size)
             token_type_embeddings = tf.matmul(one_hot_ids, token_type_table)
             token_type_embeddings = tf.reshape(token_type_embeddings,
                                                [batch_size, seq_length, width])
@@ -349,8 +354,13 @@ def transformer_model(input_tensor,
   """
     if hidden_size % num_attention_heads != 0:
         raise ValueError(
-            "The hidden size (%d) is not a multiple of the number of attention "
-            "heads (%d)" % (hidden_size, num_attention_heads))
+            "The hidden size {} is not a multiple of the number of attention "
+            "heads {}".format(hidden_size, num_attention_heads))
+
+    if num_hidden_layers % num_hidden_groups != 0:
+        raise ValueError(
+            "number hidden layers {} is not a multiple of the number of num "
+            "hidden groups {}".format(num_hidden_layers, num_attention_heads))
 
     attention_head_size = hidden_size // num_attention_heads
     input_shape = get_shape_list(input_tensor, expected_rank=3)
@@ -358,33 +368,32 @@ def transformer_model(input_tensor,
 
     all_layer_outputs = []
     if input_width != hidden_size:
-        prev_output = dense_layer_2d(
+        prev_output = abc_cd_abd(
             input_tensor, hidden_size, create_initializer(initializer_range),
-            None, use_einsum=use_einsum, name="embedding_hidden_mapping_in")
+            None, name="embedding_hidden_mapping_in")
     else:
         prev_output = input_tensor
+        num_layers_pre_group = num_hidden_layers / num_hidden_groups
     with tf.variable_scope("transformer", reuse=tf.AUTO_REUSE):
         for layer_idx in range(num_hidden_layers):
-            group_idx = int(layer_idx / num_hidden_layers * num_hidden_groups)
-            with tf.variable_scope("group_%d" % group_idx):
-                with tf.name_scope("layer_%d" % layer_idx):
-                    layer_output = prev_output
-                    for inner_group_idx in range(inner_group_num):
-                        with tf.variable_scope("inner_group_%d" % inner_group_idx):
-                            layer_output, input_bias = attention_ffn_block(
-                                layer_input=layer_output,
-                                hidden_size=hidden_size,
-                                attention_mask=attention_mask,
-                                num_attention_heads=num_attention_heads,
-                                attention_head_size=attention_head_size,
-                                attention_probs_dropout_prob=attention_probs_dropout_prob,
-                                intermediate_size=intermediate_size,
-                                intermediate_act_fn=intermediate_act_fn,
-                                initializer_range=initializer_range,
-                                hidden_dropout_prob=hidden_dropout_prob,
-                                use_einsum=use_einsum)
-                            prev_output = layer_output
-                            all_layer_outputs.append(layer_output)
+            with tf.name_scope("group_%d" % layer_idx//num_layers_pre_group):
+                inner_group_idx = int(layer_idx % num_layers_pre_group)
+                with tf.variable_scope("inner_layer_%d" % inner_group_idx):
+                    with tf.name_scope("layer_%d" % layer_idx):
+                        layer_output = prev_output
+                        layer_output, input_bias = attention_ffn_block(
+                            layer_input=layer_output,
+                            hidden_size=hidden_size,
+                            attention_mask=attention_mask,
+                            num_attention_heads=num_attention_heads,
+                            attention_head_size=attention_head_size,
+                            attention_probs_dropout_prob=attention_probs_dropout_prob,
+                            intermediate_size=intermediate_size,
+                            intermediate_act_fn=intermediate_act_fn,
+                            initializer_range=initializer_range,
+                            hidden_dropout_prob=hidden_dropout_prob)
+                        prev_output = layer_output
+                        all_layer_outputs.append(layer_output)
     if do_return_all_layers:
         return all_layer_outputs
     else:
@@ -463,18 +472,18 @@ def attention_layer(from_tensor,
     #   H = `size_per_head`
 
     # `query_layer` = [B, F, N, H]
-    q = dense_layer_3d(from_tensor, num_attention_heads, size_per_head,
-                       create_initializer(initializer_range), query_act,
-                       use_einsum, "query")
+    q = abc_ced_abde(from_tensor, num_attention_heads, size_per_head,
+                     create_initializer(initializer_range), query_act,
+                     use_einsum, "query")
 
     # `key_layer` = [B, T, N, H]
-    k = dense_layer_3d(to_tensor, num_attention_heads, size_per_head,
-                       create_initializer(initializer_range), key_act,
-                       use_einsum, "key")
+    k = abc_ced_abde(to_tensor, num_attention_heads, size_per_head,
+                     create_initializer(initializer_range), key_act,
+                     use_einsum, "key")
     # `value_layer` = [B, T, N, H]
-    v = dense_layer_3d(to_tensor, num_attention_heads, size_per_head,
-                       create_initializer(initializer_range), value_act,
-                       use_einsum, "value")
+    v = abc_ced_abde(to_tensor, num_attention_heads, size_per_head,
+                     create_initializer(initializer_range), value_act,
+                     use_einsum, "value")
     q = tf.transpose(q, [0, 2, 1, 3])
     k = tf.transpose(k, [0, 2, 1, 3])
     v = tf.transpose(v, [0, 2, 1, 3])
@@ -538,34 +547,29 @@ def attention_ffn_block(layer_input,
         # Run a linear projection of `hidden_size` then add a residual
         # with `layer_input`.
         with tf.variable_scope("output"):
-            attention_output = dense_layer_3d_proj(
+            attention_output = abcd_cde_abe(
                 attention_output,
                 hidden_size,
                 attention_head_size,
                 create_initializer(initializer_range),
                 None,
-                use_einsum=use_einsum,
                 name="dense")
             attention_output = dropout(attention_output, hidden_dropout_prob)
     attention_output = layer_norm(attention_output + layer_input)
     with tf.variable_scope("ffn_1"):
         with tf.variable_scope("intermediate"):
-            intermediate_output = dense_layer_2d(
+            intermediate_output = abc_cd_abd(
                 attention_output,
                 intermediate_size,
                 create_initializer(initializer_range),
                 intermediate_act_fn,
-                use_einsum=use_einsum,
-                num_attention_heads=num_attention_heads,
                 name="dense")
             with tf.variable_scope("output"):
-                ffn_output = dense_layer_2d(
+                ffn_output = abc_cd_abd(
                     intermediate_output,
                     hidden_size,
                     create_initializer(initializer_range),
                     None,
-                    use_einsum=use_einsum,
-                    num_attention_heads=num_attention_heads,
                     name="dense")
             ffn_output = dropout(ffn_output, hidden_dropout_prob)
     ffn_output = layer_norm(ffn_output + attention_output)
@@ -592,12 +596,8 @@ def dot_product_attention(q, k, v, bias, dropout_rate=0.0):
     if bias is not None:
         # `attention_mask` = [B, T]
         from_shape = get_shape_list(q)
-        if len(from_shape) == 4:
-            broadcast_ones = tf.ones([from_shape[0], 1, from_shape[2], 1], tf.float32)
-        elif len(from_shape) == 5:
-            # from_shape = [B, N, Block_num, block_size, depth]#
-            broadcast_ones = tf.ones([from_shape[0], 1, from_shape[2], from_shape[3],
-                                      1], tf.float32)
+        broadcast_ones = tf.ones(
+            [from_shape[0], 1, from_shape[2], 1], tf.float32)
 
         bias = tf.matmul(broadcast_ones,
                          tf.cast(bias, tf.float32), transpose_b=True)
@@ -625,12 +625,11 @@ def layer_norm_and_dropout(input_tensor, dropout_prob, name=None):
     return output_tensor
 
 
-def dense_layer_2d(input_tensor,
-                   output_size,
-                   initializer,
-                   activation,
-                   use_einsum,
-                   name=None):
+def abc_cd_abd(input_tensor,
+               output_size,
+               initializer,
+               activation,
+               name=None):
     """A dense layer with 2D kernel.
 
   Args:
@@ -654,10 +653,7 @@ def dense_layer_2d(input_tensor,
             initializer=initializer)
         b = tf.get_variable(
             name="bias", shape=[output_size], initializer=tf.zeros_initializer)
-        if use_einsum:
-            ret = tf.einsum("BFH,HO->BFO", input_tensor, w)
-        else:
-            ret = tf.matmul(input_tensor, w)
+        ret = tf.einsum("BFH,HO->BFO", input_tensor, w)
         ret += b
     if activation is not None:
         return activation(ret)
@@ -665,13 +661,12 @@ def dense_layer_2d(input_tensor,
         return ret
 
 
-def dense_layer_3d_proj(input_tensor,
-                        hidden_size,
-                        head_size,
-                        initializer,
-                        activation,
-                        use_einsum,
-                        name=None):
+def abcd_cde_abe(input_tensor,
+                 hidden_size,
+                 head_size,
+                 initializer,
+                 activation,
+                 name=None):
     """A dense layer with 3D kernel for projection.
 
   Args:
@@ -697,10 +692,7 @@ def dense_layer_3d_proj(input_tensor,
         w = tf.reshape(w, [num_attention_heads, head_size, hidden_size])
         b = tf.get_variable(
             name="bias", shape=[hidden_size], initializer=tf.zeros_initializer)
-        if use_einsum:
-            ret = tf.einsum("BFND,NDH->BFH", input_tensor, w)
-        else:
-            ret = einsum_via_matmul(input_tensor, w, 2)
+        ret = tf.einsum("BFND,NDH->BFH", input_tensor, w)
         ret += b
     if activation is not None:
         return activation(ret)
@@ -708,41 +700,13 @@ def dense_layer_3d_proj(input_tensor,
         return ret
 
 
-def einsum_via_matmul(input_tensor, w, num_inner_dims):
-    """Implements einsum via matmul and reshape ops.
-
-  Args:
-    input_tensor: float Tensor of shape [<batch_dims>, <inner_dims>].
-    w: float Tensor of shape [<inner_dims>, <outer_dims>].
-    num_inner_dims: int. number of dimensions to use for inner products.
-
-  Returns:
-    float Tensor of shape [<batch_dims>, <outer_dims>].
-  """
-    input_shape = get_shape_list(input_tensor)
-    w_shape = get_shape_list(w)
-    batch_dims = input_shape[: -num_inner_dims]
-    inner_dims = input_shape[-num_inner_dims:]
-    outer_dims = w_shape[num_inner_dims:]
-    inner_dim = np.prod(inner_dims)
-    outer_dim = np.prod(outer_dims)
-    if num_inner_dims > 1:
-        input_tensor = tf.reshape(input_tensor, batch_dims + [inner_dim])
-    if len(w_shape) > 2:
-        w = tf.reshape(w, [inner_dim, outer_dim])
-    ret = tf.matmul(input_tensor, w)
-    if len(outer_dims) > 1:
-        ret = tf.reshape(ret, batch_dims + outer_dims)
-    return ret
-
-
-def dense_layer_3d(input_tensor,
-                   num_attention_heads,
-                   head_size,
-                   initializer,
-                   activation,
-                   use_einsum,
-                   name=None):
+def abc_ced_abde(input_tensor,
+                 num_attention_heads,
+                 head_size,
+                 initializer,
+                 activation,
+                 use_einsum,
+                 name=None):
     """A dense layer with 3D kernel.
 
   Args:
@@ -772,10 +736,7 @@ def dense_layer_3d(input_tensor,
             shape=[num_attention_heads * head_size],
             initializer=tf.zeros_initializer)
         b = tf.reshape(b, [num_attention_heads, head_size])
-        if use_einsum:
-            ret = tf.einsum("BFH,HND->BFND", input_tensor, w)
-        else:
-            ret = einsum_via_matmul(input_tensor, w, 1)
+        ret = tf.einsum("BFH,HND->BFND", input_tensor, w)
         ret += b
     if activation is not None:
         return activation(ret)
@@ -885,7 +846,8 @@ def get_shape_list(tensor, expected_rank=None, name=None):
 
     if expected_rank is not None:
         assert expected_rank != tensor.shape.ndims, \
-            "tensor {} shape {} is not equal expected rank {}".format(name, tensor.shape.ndims, expected_rank)
+            "tensor {} shape {} is not equal expected rank {}".format(
+                name, tensor.shape.ndims, expected_rank)
 
     # shape = tensor.shape.as_list()
     #

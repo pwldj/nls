@@ -9,6 +9,7 @@ import tensorflow as tf
 
 import tokenization
 import collections
+tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 
 flags = tf.flags
 

@@ -137,12 +137,69 @@ class Model:
                     num_hidden_groups=config.num_hidden_groups,
                     num_attention_heads=config.num_attention_heads,
                     intermediate_size=config.intermediate_size,
-                    inner_group_num=config.inner_group_num,
                     intermediate_act_fn=get_activation(config.hidden_act),
                     hidden_dropout_prob=config.hidden_dropout_prob,
                     attention_probs_dropout_prob=config.attention_probs_dropout_prob,
                     initializer_range=config.initializer_range,
-                    do_return_all_layers=True, )
+                    do_return_all_layers=True)
+
+            self.sequence_output = self.all_encoder_layers[-1]
+            # The "pooler" converts the encoded sequence tensor of shape
+            # [batch_size, seq_length, hidden_size] to a tensor of shape
+            # [batch_size, hidden_size]. This is necessary for segment-level
+            # (or segment-pair-level) classification tasks where we need a fixed
+            # dimensional representation of the segment.
+            with tf.variable_scope("pooler"):
+                # We "pool" the model by simply taking the hidden state corresponding
+                # to the first token. We assume that this has been pre-trained
+                first_token_tensor = tf.squeeze(self.sequence_output[:, 0:1, :], axis=1)
+                self.pooled_output = tf.layers.dense(
+                    first_token_tensor,
+                    config.hidden_size,
+                    activation=tf.tanh,
+                    kernel_initializer=create_initializer(config.initializer_range))
+
+    def get_pooled_output(self):
+        return self.pooled_output
+
+    def get_sequence_output(self):
+        """Gets final hidden layer of encoder.
+
+    Returns:
+      float Tensor of shape [batch_size, seq_length, hidden_size] corresponding
+      to the final hidden of the transformer encoder.
+    """
+        return self.sequence_output
+
+    def get_all_encoder_layers(self):
+        return self.all_encoder_layers
+
+    def get_word_embedding_output(self):
+        """Get output of the word(piece) embedding lookup.
+
+    This is BEFORE positional embeddings and token type embeddings have been
+    added.
+
+    Returns:
+      float Tensor of shape [batch_size, seq_length, embedding_size]
+      corresponding to the output of the word(piece) embedding layer.
+    """
+        return self.word_embedding_output
+
+    def get_embedding_output(self):
+        """Gets output of the embedding lookup (i.e., input to the transformer).
+
+    Returns:
+      float Tensor of shape [batch_size, seq_length, embedding_size]
+      corresponding to the output of the embedding layer, after summing the word
+      embeddings with the positional embeddings and the token type embeddings,
+      then performing layer normalization. This is the input to the transformer.
+    """
+        return self.embedding_output
+
+    def get_embedding_table(self):
+        return self.output_embedding_table
+
 
 
 def embedding_lookup(input_ids,
@@ -233,7 +290,7 @@ def embedding_postprocessor(input_tensor,
   Raises:
     ValueError: One of the tensor shapes or input values is invalid.
   """
-    input_shape = get_shape_list(input_tensor, expected_rank=3)
+    input_shape = get_shape_list(input_tensor, expected_rank=[3])
     batch_size = input_shape[0]
     seq_length = input_shape[1]
     width = input_shape[2]
@@ -304,7 +361,6 @@ def transformer_model(input_tensor,
                       num_hidden_groups=12,
                       num_attention_heads=12,
                       intermediate_size=3072,
-                      inner_group_num=1,
                       intermediate_act_fn="gelu",
                       hidden_dropout_prob=0.1,
                       attention_probs_dropout_prob=0.1,
@@ -362,7 +418,7 @@ def transformer_model(input_tensor,
             "hidden groups {}".format(num_hidden_layers, num_attention_heads))
 
     attention_head_size = hidden_size // num_attention_heads
-    input_shape = get_shape_list(input_tensor, expected_rank=3)
+    input_shape = get_shape_list(input_tensor, expected_rank=[3])
     input_width = input_shape[2]
 
     all_layer_outputs = []
@@ -372,15 +428,16 @@ def transformer_model(input_tensor,
             None, name="embedding_hidden_mapping_in")
     else:
         prev_output = input_tensor
-        num_layers_pre_group = num_hidden_layers / num_hidden_groups
+
+    num_layers_pre_group = num_hidden_layers / num_hidden_groups
     with tf.variable_scope("transformer", reuse=tf.AUTO_REUSE):
         for layer_idx in range(num_hidden_layers):
-            with tf.name_scope("group_%d" % layer_idx//num_layers_pre_group):
+            with tf.name_scope("group_%d" % (layer_idx//num_layers_pre_group)):
                 inner_group_idx = int(layer_idx % num_layers_pre_group)
                 with tf.variable_scope("inner_layer_%d" % inner_group_idx):
                     with tf.name_scope("layer_%d" % layer_idx):
                         layer_output = prev_output
-                        layer_output, input_bias = attention_ffn_block(
+                        layer_output = attention_ffn_block(
                             layer_input=layer_output,
                             hidden_size=hidden_size,
                             attention_mask=attention_mask,
@@ -844,22 +901,21 @@ def get_shape_list(tensor, expected_rank=None, name=None):
         name = tensor.name
 
     if expected_rank is not None:
-        assert expected_rank != tensor.shape.ndims, \
+        assert tensor.shape.ndims in expected_rank, \
             "tensor {} shape {} is not equal expected rank {}".format(
                 name, tensor.shape.ndims, expected_rank)
 
-    # shape = tensor.shape.as_list()
-    #
-    # non_static_indexes = []
-    # for (index, dim) in enumerate(shape):
-    #     if dim is None:
-    #         non_static_indexes.append(index)
-    #
-    # if not non_static_indexes:
-    #     return shape
-    #
-    # dyn_shape = tf.shape(tensor)
-    # for index in non_static_indexes:
-    #     shape[index] = dyn_shape[index]
-    # return shape
-    return tf.shape(tensor)
+    shape = tensor.shape.as_list()
+
+    non_static_indexes = []
+    for (index, dim) in enumerate(shape):
+        if dim is None:
+            non_static_indexes.append(index)
+
+    if not non_static_indexes:
+        return shape
+
+    dyn_shape = tf.shape(tensor)
+    for index in non_static_indexes:
+        shape[index] = dyn_shape[index]
+    return shape

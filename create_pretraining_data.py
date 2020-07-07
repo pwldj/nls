@@ -114,7 +114,8 @@ class TrainingInstance(object):
         s = ""
         s += "tokens: %s\n" % (" ".join(
             [tokenization.printable_text(x) for x in self.tokens]))
-        s += "segment_ids: %s\n" % (" ".join([str(x) for x in self.segment_ids]))
+        s += "segment_ids: %s\n" % (" ".join([str(x)
+                                              for x in self.segment_ids]))
         s += "shuffle_index: %s\n" % (" ".join(
             [str(x) for x in self.shuffle_index]))
         s += "is_random_next: %s\n" % self.is_random_next
@@ -140,8 +141,10 @@ def merge_tokens(tokens_c, masked_lm_positions_c, masked_lm_labels_c, shuffle_in
     if rng.random() < 0.5:
         is_random_next = True
         tokens_c = tokens_c[sep:] + tokens_c[:sep]
-        masked_lm_positions_c = masked_lm_positions_c[sep:] + masked_lm_positions_c[:sep]
-        masked_lm_labels_c = masked_lm_labels_c[sep:] + masked_lm_labels_c[:sep]
+        masked_lm_positions_c = masked_lm_positions_c[sep:] + \
+            masked_lm_positions_c[:sep]
+        masked_lm_labels_c = masked_lm_labels_c[sep:] + \
+            masked_lm_labels_c[:sep]
         shuffle_index_c = shuffle_index_c[sep:] + shuffle_index_c[:sep]
         sep = len(tokens_c) - sep
     else:
@@ -154,7 +157,8 @@ def merge_tokens(tokens_c, masked_lm_positions_c, masked_lm_labels_c, shuffle_in
 
     for i in range(sep):
         tokens.extend(tokens_c[i])
-        masked_lm_positions.extend([x + curr_t for x in masked_lm_positions_c[i]])
+        masked_lm_positions.extend(
+            [x + curr_t for x in masked_lm_positions_c[i]])
         masked_lm_labels.extend(masked_lm_labels_c[i])
         shuffle_index.extend([x + curr_t for x in shuffle_index_c[i]])
         segment_ids.extend([0] * len(tokens_c[i]))
@@ -167,7 +171,8 @@ def merge_tokens(tokens_c, masked_lm_positions_c, masked_lm_labels_c, shuffle_in
 
     for i in range(sep, len(tokens_c)):
         tokens.extend(tokens_c[i])
-        masked_lm_positions.extend([x + curr_t for x in masked_lm_positions_c[i]])
+        masked_lm_positions.extend(
+            [x + curr_t for x in masked_lm_positions_c[i]])
         masked_lm_labels.extend(masked_lm_labels_c[i])
         shuffle_index.extend([x + curr_t for x in shuffle_index_c[i]])
         segment_ids.extend([1] * len(tokens_c[i]))
@@ -207,7 +212,8 @@ def create_mask_lm(tokens, max_mask_pre_seq):
     tokens = [x for x in tokens]
 
     tokens_len = len(tokens)
-    max_mask_token = min(max_mask_pre_seq, int(FLAGS.max_mask_prob * tokens_len) + 1)
+    max_mask_token = min(max_mask_pre_seq, int(
+        FLAGS.max_mask_prob * tokens_len) + 1)
 
     index = []
     if FLAGS.do_whole_word_mask:
@@ -364,7 +370,8 @@ def create_instances(data):
                 shuffle_index.append(shuf)
                 tokens_len += len(tok)
 
-            instances.append(merge_tokens(tokens, masked_lm_positions, masked_lm_labels, shuffle_index, sep))
+            instances.append(merge_tokens(
+                tokens, masked_lm_positions, masked_lm_labels, shuffle_index, sep))
 
             chunk = []
             tokens_len = 0
@@ -381,7 +388,8 @@ def get_docs(input_files, num_docs, tokenizer):
         with open(file, 'r', encoding='utf-8') as f:
             for line in f:
                 if FLAGS.spm_model_file:
-                    line = tokenization.preprocess_text(line, lower=FLAGS.do_lower_case)
+                    line = tokenization.preprocess_text(
+                        line, lower=FLAGS.do_lower_case)
                 else:
                     line = tokenization.convert_to_unicode(line).strip()
                 if line and not line.startswith('#'):
@@ -398,12 +406,14 @@ def get_docs(input_files, num_docs, tokenizer):
 
 
 def create_int_feature(values):
-    feature = tf.train.Feature(int64_list=tf.train.Int64List(value=list(values)))
+    feature = tf.train.Feature(
+        int64_list=tf.train.Int64List(value=list(values)))
     return feature
 
 
 def create_float_feature(values):
-    feature = tf.train.Feature(float_list=tf.train.FloatList(value=list(values)))
+    feature = tf.train.Feature(
+        float_list=tf.train.FloatList(value=list(values)))
     return feature
 
 
@@ -429,7 +439,8 @@ def write_instance(instances, writer, max_seq_length, tokenizer):
         assert len(shuffle_index) == max_seq_length
 
         masked_lm_positions = list(instance.masked_lm_positions)
-        masked_lm_ids = tokenizer.convert_tokens_to_ids(instance.masked_lm_labels)
+        masked_lm_ids = tokenizer.convert_tokens_to_ids(
+            instance.masked_lm_labels)
         masked_lm_weights = [1.0] * len(masked_lm_ids)
 
         assert len(masked_lm_positions) <= FLAGS.max_mask_token
@@ -450,7 +461,8 @@ def write_instance(instances, writer, max_seq_length, tokenizer):
         features["input_mask"] = create_int_feature(input_mask)
         features["segment_ids"] = create_int_feature(segment_ids)
         features["shuffle_index"] = create_int_feature(shuffle_index)
-        features["masked_lm_positions"] = create_int_feature(masked_lm_positions)
+        features["masked_lm_positions"] = create_int_feature(
+            masked_lm_positions)
         features["masked_lm_ids"] = create_int_feature(masked_lm_ids)
         features["masked_lm_weights"] = create_float_feature(masked_lm_weights)
         # Note: We keep this feature name `next_sentence_labels` to be compatible
@@ -459,7 +471,8 @@ def write_instance(instances, writer, max_seq_length, tokenizer):
         features["next_sentence_labels"] = create_int_feature(
             [sentence_order_label])
 
-        tf_example = tf.train.Example(features=tf.train.Features(feature=features))
+        tf_example = tf.train.Example(
+            features=tf.train.Features(feature=features))
 
         writer.write(tf_example.SerializeToString())
 
@@ -488,7 +501,8 @@ def main(_):
 
     writers = []
     for i in range(FLAGS.writer_num):
-        writers.append(tf.python_io.TFRecordWriter(os.path.join(FLAGS.output_file, "example_{}.tfrecord".format(i))))
+        writers.append(tf.python_io.TFRecordWriter(os.path.join(
+            FLAGS.output_file, "example_{}.tfrecord".format(i))))
     writers_id = 0
 
     count = 0
@@ -497,7 +511,8 @@ def main(_):
         # docs = [(i, docs) for i in range(len(docs))]
         for _ in range(FLAGS.dupe_factor):
             for instances in pool.imap(create_instances, docs):
-                n = write_instance(instances, writers[writers_id], FLAGS.max_seq_length, tokenizer)
+                n = write_instance(
+                    instances, writers[writers_id], FLAGS.max_seq_length, tokenizer)
                 writers_id = (writers_id + 1) % len(writers)
                 count += n
 

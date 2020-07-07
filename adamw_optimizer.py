@@ -90,8 +90,8 @@ class AdamOptimizer(optimizer.Optimizer):
 
         # Create slots for the first and second moments.
         for v in var_list:
-            self._zeros_slot(v, "m", self._name)
-            self._zeros_slot(v, "v", self._name)
+            self._zeros_slot(v, "adam_m", self._name)
+            self._zeros_slot(v, "adam_v", self._name)
 
     def _prepare(self):
         lr = self._call_if_callable(self._lr)
@@ -115,8 +115,8 @@ class AdamOptimizer(optimizer.Optimizer):
             self._weight_decay_rate_t, var.dtype.base_dtype)
         epsilon_t = math_ops.cast(self._epsilon_t, var.dtype.base_dtype)
 
-        m = self.get_slot(var, "m")
-        v = self.get_slot(var, "v")
+        m = self.get_slot(var, "adam_m")
+        v = self.get_slot(var, "adam_v")
         m_t = (tf.multiply(beta1_t, m) + tf.multiply(1.0 - beta1_t, grad))
         v_t = (tf.multiply(beta2_t, v) +
                tf.multiply(1.0 - beta2_t, tf.square(grad)))
@@ -136,8 +136,8 @@ class AdamOptimizer(optimizer.Optimizer):
             self._weight_decay_rate_t, var.dtype.base_dtype)
         epsilon_t = math_ops.cast(self._epsilon_t, var.dtype.base_dtype)
 
-        m = self.get_slot(var, "m")
-        v = self.get_slot(var, "v")
+        m = self.get_slot(var, "adam_m")
+        v = self.get_slot(var, "adam_v")
         m_t = (tf.multiply(beta1_t, m) + tf.multiply(1.0 - beta1_t, grad))
         v_t = (tf.multiply(beta2_t, v) +
                tf.multiply(1.0 - beta2_t, tf.square(grad)))
@@ -155,13 +155,13 @@ class AdamOptimizer(optimizer.Optimizer):
         beta2_t = math_ops.cast(self._beta2_t, var.dtype.base_dtype)
         epsilon_t = math_ops.cast(self._epsilon_t, var.dtype.base_dtype)
         # m_t = beta1 * m + (1 - beta1) * g_t
-        m = self.get_slot(var, "m")
+        m = self.get_slot(var, "adam_m")
         m_scaled_g_values = grad * (1 - beta1_t)
         m_t = state_ops.assign(m, m * beta1_t, use_locking=self._use_locking)
         with ops.control_dependencies([m_t]):
             m_t = scatter_add(m, indices, m_scaled_g_values)
         # v_t = beta2 * v + (1 - beta2) * (g_t * g_t)
-        v = self.get_slot(var, "v")
+        v = self.get_slot(var, "adam_v")
         v_scaled_g_values = (grad * grad) * (1 - beta2_t)
         v_t = state_ops.assign(v, v * beta2_t, use_locking=self._use_locking)
         with ops.control_dependencies([v_t]):

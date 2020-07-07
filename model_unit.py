@@ -1,6 +1,7 @@
 import collections
 import os
 import re
+import adamw_optimizer
 
 import tensorflow as tf
 
@@ -59,3 +60,55 @@ def get_assignment_map_from_checkpoint(tvars, init_checkpoint):
         initialized_variable_names[name + ":0"] = 1
 
     return assignment_map, initialized_variable_names
+
+
+def get_train_op(FLAGS, total_loss, grads_and_vars=None):
+    global_step = tf.train.get_or_create_global_step()
+
+    if FLAGS.warmup_steps > 0:
+        warmup_lr = (tf.cast(global_step, tf.float32)
+                     / tf.cast(FLAGS.warmup_steps, tf.float32)
+                     * FLAGS.learning_rate)
+    else:
+        warmup_lr = 0.0
+
+    # decay the learning rate
+    if FLAGS.decay_method == "poly":
+        decay_lr = tf.train.polynomial_decay(
+            FLAGS.learning_rate,
+            global_step=global_step - FLAGS.warmup_steps,
+            decay_steps=FLAGS.train_steps - FLAGS.warmup_steps,
+            end_learning_rate=FLAGS.learning_rate * FLAGS.min_lr_ratio)
+    elif FLAGS.decay_method == "cos":
+        decay_lr = tf.train.cosine_decay(
+            FLAGS.learning_rate,
+            global_step=global_step - FLAGS.warmup_steps,
+            decay_steps=FLAGS.train_steps - FLAGS.warmup_steps,
+            alpha=FLAGS.min_lr_ratio)
+    else:
+        raise ValueError(FLAGS.decay_method)
+
+    learning_rate = tf.where(global_step < FLAGS.warmup_steps,
+                             warmup_lr, decay_lr)
+
+    if not FLAGS.use_tpu:
+        optimizer = adamw_optimizer.AdamOptimizer(weight_decay_rate=FLAGS.weight_decay,
+                                                  exclude_from_weight_decay=["LayerNorm", "layer_norm", "bias"])
+    else:
+        raise Exception("not support tpu")
+
+    tvars = tf.trainable_variables()
+    if FLAGS.num_core_per_host > 1:
+        grads = tf.gradients(
+            total_loss, tvars, colocate_gradients_with_ops=True)
+    else:
+        grads = tf.gradients(
+            total_loss, tvars, colocate_gradients_with_ops=False)
+
+    # This is how the model was pre-trained.
+    grads, gnorm = tf.clip_by_global_norm(grads, FLAGS.clip)
+
+    train_op = optimizer.apply_gradients(
+        list(zip(grads, tvars)), global_step=global_step)
+
+    return train_op, learning_rate, gnorm

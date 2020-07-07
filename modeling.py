@@ -7,6 +7,7 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.contrib import layers as contrib_layers
 
+
 class ModelConfig(object):
     def __init__(self,
                  vocab_size,
@@ -23,22 +24,6 @@ class ModelConfig(object):
                  type_vocab_size=2,
                  initializer_range=0.02
                  ):
-        """
-
-        :param vocab_size:
-        :param embedding_size:
-        :param hidden_size:
-        :param num_hidden_layers:
-        :param num_hidden_groups:
-        :param num_attention_heads:
-        :param intermediate_size:
-        :param hidden_act:
-        :param hidden_dropout_prob:
-        :param attention_probs_dropout_prob:
-        :param max_position_embeddings:
-        :param type_vocab_size:
-        :param initializer_range:
-        """
         self.vocab_size = vocab_size
         self.embedding_size = embedding_size
         self.hidden_size = hidden_size
@@ -128,7 +113,7 @@ class Model:
                     dropout_prob=config.hidden_dropout_prob,
                     use_one_hot_embeddings=use_one_hot_embeddings)
 
-            with tf.variable_scope('transformer'):
+            with tf.variable_scope('transformer', reuse=tf.AUTO_REUSE):
                 self.all_encoder_layers = transformer_model(
                     input_tensor=self.embedding_output,
                     attention_mask=input_mask,
@@ -152,7 +137,8 @@ class Model:
             with tf.variable_scope("pooler"):
                 # We "pool" the model by simply taking the hidden state corresponding
                 # to the first token. We assume that this has been pre-trained
-                first_token_tensor = tf.squeeze(self.sequence_output[:, 0:1, :], axis=1)
+                first_token_tensor = tf.squeeze(
+                    self.sequence_output[:, 0:1, :], axis=1)
                 self.pooled_output = tf.layers.dense(
                     first_token_tensor,
                     config.hidden_size,
@@ -163,43 +149,19 @@ class Model:
         return self.pooled_output
 
     def get_sequence_output(self):
-        """Gets final hidden layer of encoder.
-
-    Returns:
-      float Tensor of shape [batch_size, seq_length, hidden_size] corresponding
-      to the final hidden of the transformer encoder.
-    """
         return self.sequence_output
 
     def get_all_encoder_layers(self):
         return self.all_encoder_layers
 
     def get_word_embedding_output(self):
-        """Get output of the word(piece) embedding lookup.
-
-    This is BEFORE positional embeddings and token type embeddings have been
-    added.
-
-    Returns:
-      float Tensor of shape [batch_size, seq_length, embedding_size]
-      corresponding to the output of the word(piece) embedding layer.
-    """
         return self.word_embedding_output
 
     def get_embedding_output(self):
-        """Gets output of the embedding lookup (i.e., input to the transformer).
-
-    Returns:
-      float Tensor of shape [batch_size, seq_length, embedding_size]
-      corresponding to the output of the embedding layer, after summing the word
-      embeddings with the positional embeddings and the token type embeddings,
-      then performing layer normalization. This is the input to the transformer.
-    """
         return self.embedding_output
 
     def get_embedding_table(self):
         return self.output_embedding_table
-
 
 
 def embedding_lookup(input_ids,
@@ -208,26 +170,6 @@ def embedding_lookup(input_ids,
                      initializer_range=0.02,
                      word_embedding_name="word_embeddings",
                      use_one_hot_embeddings=False):
-    """Looks up words embeddings for id tensor.
-
-  Args:
-    input_ids: int32 Tensor of shape [batch_size, seq_length] containing word
-      ids.
-    vocab_size: int. Size of the embedding vocabulary.
-    embedding_size: int. Width of the word embeddings.
-    initializer_range: float. Embedding initialization range.
-    word_embedding_name: string. Name of the embedding table.
-    use_one_hot_embeddings: bool. If True, use one-hot method for word
-      embeddings. If False, use `tf.nn.embedding_lookup()`.
-
-  Returns:
-    float Tensor of shape [batch_size, seq_length, embedding_size].
-  """
-    # This function assumes that the input is of shape [batch_size, seq_length,
-    # num_inputs].
-    #
-    # If the input is a 2D tensor of shape [batch_size, seq_length], we
-    # reshape to [batch_size, seq_length, 1].
     if input_ids.shape.ndims == 2:
         input_ids = tf.expand_dims(input_ids, axis=[-1])
 
@@ -261,35 +203,6 @@ def embedding_postprocessor(input_tensor,
                             max_position_embeddings=512,
                             dropout_prob=0.1,
                             use_one_hot_embeddings=True):
-    """Performs various post-processing on a word embedding tensor.
-
-  Args:
-    input_tensor: float Tensor of shape [batch_size, seq_length,
-      embedding_size].
-    use_token_type: bool. Whether to add embeddings for `token_type_ids`.
-    token_type_ids: (optional) int32 Tensor of shape [batch_size, seq_length].
-      Must be specified if `use_token_type` is True.
-    token_type_vocab_size: int. The vocabulary size of `token_type_ids`.
-    token_type_embedding_name: string. The name of the embedding table variable
-      for token type ids.
-    use_position_embeddings: bool. Whether to add position embeddings for the
-      position of each token in the sequence.
-    position_embedding_name: string. The name of the embedding table variable
-      for positional embeddings.
-    initializer_range: float. Range of the weight initialization.
-    max_position_embeddings: int. Maximum sequence length that might ever be
-      used with this model. This can be longer than the sequence length of
-      input_tensor, but cannot be shorter.
-    dropout_prob: float. Dropout probability applied to the final output tensor.
-    use_one_hot_embeddings: bool. If True, use one-hot method for word
-      embeddings. If False, use `tf.nn.embedding_lookup()`.
-
-  Returns:
-    float tensor with same shape as `input_tensor`.
-
-  Raises:
-    ValueError: One of the tensor shapes or input values is invalid.
-  """
     input_shape = get_shape_list(input_tensor, expected_rank=[3])
     batch_size = input_shape[0]
     seq_length = input_shape[1]
@@ -365,48 +278,8 @@ def transformer_model(input_tensor,
                       hidden_dropout_prob=0.1,
                       attention_probs_dropout_prob=0.1,
                       initializer_range=0.02,
-                      do_return_all_layers=False):
-    """Multi-headed, multi-layer Transformer from "Attention is All You Need".
-
-  This is almost an exact implementation of the original Transformer encoder.
-
-  See the original paper:
-  https://arxiv.org/abs/1706.03762
-
-  Also see:
-  https://github.com/tensorflow/tensor2tensor/blob/master/tensor2tensor/models/transformer.py
-
-  Args:
-    input_tensor: float Tensor of shape [batch_size, seq_length, hidden_size].
-    attention_mask: (optional) int32 Tensor of shape [batch_size, seq_length],
-      with 1 for positions that can be attended to and 0 in positions that
-      should not be.
-    hidden_size: int. Hidden size of the Transformer.
-    num_hidden_layers: int. Number of layers (blocks) in the Transformer.
-    num_hidden_groups: int. Number of group for the hidden layers, parameters
-      in the same group are shared.
-    num_attention_heads: int. Number of attention heads in the Transformer.
-    intermediate_size: int. The size of the "intermediate" (a.k.a., feed
-      forward) layer.
-    inner_group_num: int, number of inner repetition of attention and ffn.
-    intermediate_act_fn: function. The non-linear activation function to apply
-      to the output of the intermediate/feed-forward layer.
-    hidden_dropout_prob: float. Dropout probability for the hidden layers.
-    attention_probs_dropout_prob: float. Dropout probability of the attention
-      probabilities.
-    initializer_range: float. Range of the initializer (stddev of truncated
-      normal).
-    do_return_all_layers: Whether to also return all layers or just the final
-      layer.
-    use_einsum: bool. Whether to use einsum or reshape+matmul for dense layers
-
-  Returns:
-    float Tensor of shape [batch_size, seq_length, hidden_size], the final
-    hidden layer of the Transformer.
-
-  Raises:
-    ValueError: A Tensor shape or parameter is invalid.
-  """
+                      do_return_all_layers=False,
+                      in_group_reuse=True):
     if hidden_size % num_attention_heads != 0:
         raise ValueError(
             "The hidden size {} is not a multiple of the number of attention "
@@ -429,13 +302,14 @@ def transformer_model(input_tensor,
     else:
         prev_output = input_tensor
 
-    num_layers_pre_group = num_hidden_layers / num_hidden_groups
-    with tf.variable_scope("transformer", reuse=tf.AUTO_REUSE):
-        for layer_idx in range(num_hidden_layers):
-            with tf.name_scope("group_%d" % (layer_idx//num_layers_pre_group)):
-                inner_group_idx = int(layer_idx % num_layers_pre_group)
-                with tf.variable_scope("inner_layer_%d" % inner_group_idx):
-                    with tf.name_scope("layer_%d" % layer_idx):
+    num_layers_pre_group = int(num_hidden_layers / num_hidden_groups)
+    for group_idx in range(num_hidden_groups):
+        with tf.name_scope("group_%d" % group_idx):
+            for inner_group_idx in range(num_layers_pre_group):
+                layer_idx = group_idx * num_layers_pre_group + inner_group_idx
+                var_idx = group_idx if in_group_reuse else inner_group_idx
+                with tf.name_scope("layer_%d" % layer_idx):
+                    with tf.variable_scope("inner_layer_%d" % var_idx):
                         layer_output = prev_output
                         layer_output = attention_ffn_block(
                             layer_input=layer_output,
@@ -469,38 +343,6 @@ def attention_layer(from_tensor,
                     from_seq_length=None,
                     to_seq_length=None,
                     use_einsum=True):
-    """Performs multi-headed attention from `from_tensor` to `to_tensor`.
-
-  Args:
-    from_tensor: float Tensor of shape [batch_size, from_seq_length,
-      from_width].
-    to_tensor: float Tensor of shape [batch_size, to_seq_length, to_width].
-    attention_mask: (optional) int32 Tensor of shape [batch_size, seq_length].
-      The values should be 1 or 0. The attention scores will effectively
-      be set to -infinity for any positions in the mask that are 0, and
-      will be unchanged for positions that are 1.
-    num_attention_heads: int. Number of attention heads.
-    query_act: (optional) Activation function for the query transform.
-    key_act: (optional) Activation function for the key transform.
-    value_act: (optional) Activation function for the value transform.
-    attention_probs_dropout_prob: (optional) float. Dropout probability of the
-      attention probabilities.
-    initializer_range: float. Range of the weight initializer.
-    batch_size: (Optional) int. If the input is 2D, this might be the batch size
-      of the 3D version of the `from_tensor` and `to_tensor`.
-    from_seq_length: (Optional) If the input is 2D, this might be the seq length
-      of the 3D version of the `from_tensor`.
-    to_seq_length: (Optional) If the input is 2D, this might be the seq length
-      of the 3D version of the `to_tensor`.
-    use_einsum: bool. Whether to use einsum or reshape+matmul for dense layers
-
-  Returns:
-    float Tensor of shape [batch_size, from_seq_length, num_attention_heads,
-      size_per_head].
-
-  Raises:
-    ValueError: Any of the arguments or tensor shapes are invalid.
-  """
     from_shape = get_shape_list(from_tensor, expected_rank=[2, 3])
     to_shape = get_shape_list(to_tensor, expected_rank=[2, 3])
     size_per_head = int(from_shape[2] / num_attention_heads)
@@ -514,7 +356,7 @@ def attention_layer(from_tensor,
         from_seq_length = from_shape[1]
         to_seq_length = to_shape[1]
     elif len(from_shape) == 2:
-        if (batch_size is None or from_seq_length is None or to_seq_length is None):
+        if batch_size is None or from_seq_length is None or to_seq_length is None:
             raise ValueError(
                 "When passing in rank 2 tensors to attention_layer, the values "
                 "for `batch_size`, `from_seq_length`, and `to_seq_length` "
@@ -529,17 +371,14 @@ def attention_layer(from_tensor,
 
     # `query_layer` = [B, F, N, H]
     q = abc_ced_abde(from_tensor, num_attention_heads, size_per_head,
-                     create_initializer(initializer_range), query_act,
-                     use_einsum, "query")
+                     create_initializer(initializer_range), query_act, "query")
 
     # `key_layer` = [B, T, N, H]
     k = abc_ced_abde(to_tensor, num_attention_heads, size_per_head,
-                     create_initializer(initializer_range), key_act,
-                     use_einsum, "key")
+                     create_initializer(initializer_range), key_act, "key")
     # `value_layer` = [B, T, N, H]
     v = abc_ced_abde(to_tensor, num_attention_heads, size_per_head,
-                     create_initializer(initializer_range), value_act,
-                     use_einsum, "value")
+                     create_initializer(initializer_range), value_act, "value")
     q = tf.transpose(q, [0, 2, 1, 3])
     k = tf.transpose(k, [0, 2, 1, 3])
     v = tf.transpose(v, [0, 2, 1, 3])
@@ -564,31 +403,6 @@ def attention_ffn_block(layer_input,
                         initializer_range=0.02,
                         hidden_dropout_prob=0.0,
                         use_einsum=True):
-    """A network with attention-ffn as sub-block.
-
-  Args:
-    layer_input: float Tensor of shape [batch_size, from_seq_length,
-      from_width].
-    hidden_size: (optional) int, size of hidden layer.
-    attention_mask: (optional) int32 Tensor of shape [batch_size, seq_length].
-      The values should be 1 or 0. The attention scores will effectively be set
-      to -infinity for any positions in the mask that are 0, and will be
-      unchanged for positions that are 1.
-    num_attention_heads: int. Number of attention heads.
-    attention_head_size: int. Size of attention head.
-    attention_probs_dropout_prob: float. dropout probability for attention_layer
-    intermediate_size: int. Size of intermediate hidden layer.
-    intermediate_act_fn: (optional) Activation function for the intermediate
-      layer.
-    initializer_range: float. Range of the weight initializer.
-    hidden_dropout_prob: (optional) float. Dropout probability of the hidden
-      layer.
-    use_einsum: bool. Whether to use einsum or reshape+matmul for dense layers
-
-  Returns:
-    layer output
-  """
-
     with tf.variable_scope("attention_1"):
         with tf.variable_scope("self"):
             attention_output = attention_layer(
@@ -633,20 +447,6 @@ def attention_ffn_block(layer_input,
 
 
 def dot_product_attention(q, k, v, bias, dropout_rate=0.0):
-    """Dot-product attention.
-
-  Args:
-    q: Tensor with shape [..., length_q, depth_k].
-    k: Tensor with shape [..., length_kv, depth_k]. Leading dimensions must
-      match with q.
-    v: Tensor with shape [..., length_kv, depth_v] Leading dimensions must
-      match with q.
-    bias: bias Tensor (see attention_bias())
-    dropout_rate: a float.
-
-  Returns:
-    Tensor with shape [..., length_q, depth_v].
-  """
     logits = tf.matmul(q, k, transpose_b=True)  # [..., length_q, length_kv]
     logits = tf.multiply(logits, 1.0 / math.sqrt(float(get_shape_list(q)[-1])))
     if bias is not None:
@@ -686,20 +486,6 @@ def abc_cd_abd(input_tensor,
                initializer,
                activation,
                name=None):
-    """A dense layer with 2D kernel.
-
-  Args:
-    input_tensor: Float tensor with rank 3.
-    output_size: The size of output dimension.
-    initializer: Kernel initializer.
-    activation: Activation function.
-    use_einsum: bool. Whether to use einsum or reshape+matmul for dense layers.
-    num_attention_heads: number of attention head in attention layer.
-    name: The name scope of this layer.
-
-  Returns:
-    float logits Tensor.
-  """
     input_shape = get_shape_list(input_tensor)
     hidden_size = input_shape[2]
     with tf.variable_scope(name):
@@ -761,7 +547,6 @@ def abc_ced_abde(input_tensor,
                  head_size,
                  initializer,
                  activation,
-                 use_einsum,
                  name=None):
     """A dense layer with 3D kernel.
 

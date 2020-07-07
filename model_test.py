@@ -17,7 +17,7 @@ class ModelTest(tf.test.TestCase):
                      embedding_size=32,
                      hidden_size=32,
                      num_hidden_layers=6,
-                     num_hidden_groups=2,
+                     num_hidden_groups=1,
                      num_attention_heads=4,
                      intermediate_size=37,
                      hidden_act="gelu",
@@ -92,7 +92,6 @@ class ModelTest(tf.test.TestCase):
                 "all_encoder_layers": model.get_all_encoder_layers(),
             }
             return outputs
-
 
     def test_default(self):
         self.run_tester(ModelTest.ModelTester(self))

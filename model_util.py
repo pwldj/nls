@@ -33,6 +33,48 @@ def init_from_checkpoint(FLAGS, global_vars=False):
                             init_string)
 
 
+def configure_tpu(FLAGS):
+    if FLAGS.use_tpu:
+        tpu_cluster = tf.contrib.cluster_resolver.TPUClusterResolver(
+            FLAGS.tpu, zone=FLAGS.tpu_zone, project=FLAGS.gcp_project)
+        master = tpu_cluster.get_master()
+    else:
+        tpu_cluster = None
+        master = FLAGS.master
+
+    session_config = tf.ConfigProto(allow_soft_placement=True)
+    # Uncomment the following line if you hope to monitor GPU RAM growth
+    # session_config.gpu_options.allow_growth = True
+
+    if FLAGS.use_tpu:
+        strategy = None
+        tf.logging.info('Use TPU without distribute strategy.')
+    elif FLAGS.num_core_per_host == 1:
+        strategy = None
+        tf.logging.info('Single device mode.')
+    else:
+        strategy = tf.contrib.distribute.MirroredStrategy(
+            num_gpus=FLAGS.num_core_per_host)
+        tf.logging.info('Use MirroredStrategy with %d devices.',
+                        strategy.num_replicas_in_sync)
+
+    per_host_input = tf.contrib.tpu.InputPipelineConfig.PER_HOST_V2
+    run_config = tf.contrib.tpu.RunConfig(
+        master=master,
+        model_dir=FLAGS.model_dir,
+        session_config=session_config,
+        tpu_config=tf.contrib.tpu.TPUConfig(
+            iterations_per_loop=FLAGS.iterations,
+            num_shards=FLAGS.num_hosts * FLAGS.num_core_per_host,
+            per_host_input_for_training=per_host_input),
+        keep_checkpoint_max=FLAGS.max_save,
+        save_checkpoints_secs=None,
+        save_checkpoints_steps=FLAGS.save_steps,
+        train_distribute=strategy
+    )
+    return run_config
+
+
 def get_assignment_map_from_checkpoint(tvars, init_checkpoint):
     """Compute the union of the current variables and checkpoint variables."""
     assignment_map = {}
@@ -92,8 +134,10 @@ def get_train_op(FLAGS, total_loss, grads_and_vars=None):
                              warmup_lr, decay_lr)
 
     if not FLAGS.use_tpu:
-        optimizer = adamw_optimizer.AdamOptimizer(weight_decay_rate=FLAGS.weight_decay,
-                                                  exclude_from_weight_decay=["LayerNorm", "layer_norm", "bias"])
+        optimizer = adamw_optimizer.AdamOptimizer(
+            learning_rate=learning_rate,
+            weight_decay_rate=FLAGS.weight_decay,
+            exclude_from_weight_decay=["LayerNorm", "layer_norm", "bias"])
     else:
         raise Exception("not support tpu")
 

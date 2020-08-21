@@ -9,6 +9,7 @@ import tensorflow as tf
 
 import tokenization
 import collections
+
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 
 flags = tf.flags
@@ -23,7 +24,7 @@ flags.DEFINE_string(
     "Output TF example file (or comma-separated list of files).")
 
 flags.DEFINE_integer(
-    "writer_num", 10,
+    "writer_num", 6,
     ""
 )
 
@@ -60,7 +61,7 @@ flags.DEFINE_integer(
 )
 
 flags.DEFINE_integer(
-    "max_shuffle_time", 5,
+    "max_shuffle_time", 3,
     ""
 )
 
@@ -70,7 +71,7 @@ flags.DEFINE_float(
 )
 
 flags.DEFINE_integer(
-    "dupe_factor", 40,
+    "dupe_factor", 10,
     ""
 )
 
@@ -85,7 +86,7 @@ flags.DEFINE_integer(
 )
 
 flags.DEFINE_integer(
-    "num_thread", 16,
+    "num_thread", 4,
     ""
 )
 
@@ -96,18 +97,25 @@ flags.DEFINE_integer(
 
 rng = random.Random()
 
+tokenizer = tokenization.FullTokenizer(
+    vocab_file=FLAGS.vocab_file, do_lower_case=FLAGS.do_lower_case,
+    spm_model_file=FLAGS.spm_model_file)
+
 
 class TrainingInstance(object):
     """A single training instance (sentence pair)."""
 
     def __init__(self, tokens, segment_ids, masked_lm_positions, masked_lm_labels, shuffle_index, is_random_next,
+                 seq_ids,
                  length):
         self.tokens = tokens
+        self.input_ids = tokenizer.convert_tokens_to_ids(self.tokens)
         self.segment_ids = segment_ids
         self.is_random_next = is_random_next
         self.masked_lm_positions = masked_lm_positions
         self.masked_lm_labels = masked_lm_labels
         self.shuffle_index = shuffle_index
+        self.seq_ids = seq_ids
         self.length = length
 
     def __str__(self):
@@ -136,15 +144,14 @@ def merge_tokens(tokens_c, masked_lm_positions_c, masked_lm_labels_c, shuffle_in
     masked_lm_labels = []
     shuffle_index = []
     segment_ids = []
+    seq_ids = []
     curr_t = 0
 
     if rng.random() < 0.5:
         is_random_next = True
         tokens_c = tokens_c[sep:] + tokens_c[:sep]
-        masked_lm_positions_c = masked_lm_positions_c[sep:] + \
-            masked_lm_positions_c[:sep]
-        masked_lm_labels_c = masked_lm_labels_c[sep:] + \
-            masked_lm_labels_c[:sep]
+        masked_lm_positions_c = masked_lm_positions_c[sep:] + masked_lm_positions_c[:sep]
+        masked_lm_labels_c = masked_lm_labels_c[sep:] + masked_lm_labels_c[:sep]
         shuffle_index_c = shuffle_index_c[sep:] + shuffle_index_c[:sep]
         sep = len(tokens_c) - sep
     else:
@@ -153,6 +160,7 @@ def merge_tokens(tokens_c, masked_lm_positions_c, masked_lm_labels_c, shuffle_in
     tokens.append("[CLS]")
     segment_ids.append(0)
     shuffle_index.append(curr_t)
+    seq_ids.append(0)
     curr_t += 1
 
     for i in range(sep):
@@ -162,11 +170,13 @@ def merge_tokens(tokens_c, masked_lm_positions_c, masked_lm_labels_c, shuffle_in
         masked_lm_labels.extend(masked_lm_labels_c[i])
         shuffle_index.extend([x + curr_t for x in shuffle_index_c[i]])
         segment_ids.extend([0] * len(tokens_c[i]))
+        seq_ids.extend([i + 1] * len(tokens_c[i]))
         curr_t += len(tokens_c[i])
 
     tokens.append("[SEP]")
     segment_ids.append(0)
     shuffle_index.append(curr_t)
+    seq_ids.append(0)
     curr_t += 1
 
     for i in range(sep, len(tokens_c)):
@@ -176,31 +186,37 @@ def merge_tokens(tokens_c, masked_lm_positions_c, masked_lm_labels_c, shuffle_in
         masked_lm_labels.extend(masked_lm_labels_c[i])
         shuffle_index.extend([x + curr_t for x in shuffle_index_c[i]])
         segment_ids.extend([1] * len(tokens_c[i]))
+        seq_ids.extend([i + 1] * len(tokens_c[i]))
         curr_t += len(tokens_c[i])
 
     tokens.append("[SEP]")
     segment_ids.append(1)
     shuffle_index.append(curr_t)
+    seq_ids.append(0)
     curr_t += 1
 
     instance = TrainingInstance(tokens, segment_ids, masked_lm_positions, masked_lm_labels, shuffle_index,
-                                is_random_next, curr_t)
+                                is_random_next, seq_ids, curr_t)
 
     return instance
 
 
 def is_start_piece(piece):
     """Check if the current word piece is the starting piece (sentence piece)."""
-    special_pieces = set(list('!"#$%&\"()*+,-./:;?@[\\]^_`{|}~'))
-    special_pieces.add(u"€".encode("utf-8"))
-    special_pieces.add(u"£".encode("utf-8"))
-    # Note(mingdachen):
-    # For foreign characters, we always treat them as a whole piece.
-    english_chars = set(list("abcdefghijklmnopqrstuvwxyz"))
-    if (six.ensure_str(piece).startswith("▁") or
-            six.ensure_str(piece).startswith("<") or piece in special_pieces or piece in ["[CLS]", "[SEP]", "[MASK]"] or
-            not all([i.lower() in english_chars.union(special_pieces)
-                     for i in piece])):
+    # special_pieces = set(list('!"#$%&\"()*+,-./:;?@[\\]^_`{|}~'))
+    # special_pieces.add(u"€".encode("utf-8"))
+    # special_pieces.add(u"£".encode("utf-8"))
+    # # Note(mingdachen):
+    # # For foreign characters, we always treat them as a whole piece.
+    # english_chars = set(list("abcdefghijklmnopqrstuvwxyz"))
+    # if (six.ensure_str(piece).startswith("▁") or
+    #         six.ensure_str(piece).startswith("<") or piece in special_pieces or piece in ["[CLS]", "[SEP]", "[MASK]"] or
+    #         not all([i.lower() in english_chars.union(special_pieces)
+    #                  for i in piece])):
+    #     return True
+    # else:
+    #     return False
+    if six.ensure_str(piece).startswith("▁") or piece == "[MASK]":
         return True
     else:
         return False
@@ -209,7 +225,7 @@ def is_start_piece(piece):
 def create_mask_lm(tokens, max_mask_pre_seq):
     if max_mask_pre_seq <= 0 or rng.random() < 0.52 or not tokens:
         return tokens, [], []
-    tokens = [x for x in tokens]
+    # tokens = [x for x in tokens]
 
     tokens_len = len(tokens)
     max_mask_token = min(max_mask_pre_seq, int(
@@ -280,7 +296,7 @@ def shuffle_token(tokens):
         random_next = None
         for _ in range(FLAGS.max_shuffle_time):
             random_next = rng.randint(i + 1, len(words) - 1)
-            if words[random_next] != ["[MASK]"] and len(words[i]) == len(words[random_next]):
+            if len(words[i]) == len(words[random_next]) and words[random_next] != ["[MASK]"]:
                 words[i], words[random_next] = words[random_next], words[i]
                 index[i], index[random_next] = index[random_next], index[i]
                 break
@@ -317,7 +333,7 @@ def create_instances(data):
     # index = data[0]
     # docs = data[1]
     # doc = docs[index]
-    doc = data
+    doc = [tokenizer.tokenize(x) for x in data]
 
     max_num_tokens = FLAGS.max_seq_length - 3
 
@@ -380,7 +396,7 @@ def create_instances(data):
     return instances
 
 
-def get_docs(input_files, num_docs, tokenizer):
+def get_docs(input_files, num_docs):
     docs = [[]]
 
     for file in input_files:
@@ -393,16 +409,16 @@ def get_docs(input_files, num_docs, tokenizer):
                 else:
                     line = tokenization.convert_to_unicode(line).strip()
                 if line and not line.startswith('#'):
-                    tokens = tokenizer.tokenize(line)
-                    docs[-1].append(tokens)
+                    # tokens = tokenizer.tokenize(line)
+                    docs[-1].append(line)
                 elif docs[-1]:
                     if num_docs != 0 and len(docs) == num_docs:
                         yield docs
                         docs = [[]]
                     else:
                         docs.append([])
-            yield docs
-            docs = [[]]
+        yield docs
+        docs = [[]]
 
 
 def create_int_feature(values):
@@ -417,21 +433,22 @@ def create_float_feature(values):
     return feature
 
 
-def write_instance(instances, writer, max_seq_length, tokenizer):
+def write_instance(instances, writer, max_seq_length):
     for instance in instances:
-        input_ids = tokenizer.convert_tokens_to_ids(instance.tokens)
+        # input_ids = tokenizer.convert_tokens_to_ids(instance.tokens)
+        input_ids = instance.input_ids
         input_mask = [1] * len(input_ids)
         segment_ids = list(instance.segment_ids)
         shuffle_index = list(instance.shuffle_index)
+        seq_ids = list(instance.seq_ids)
         assert len(input_ids) <= max_seq_length
 
-        i = len(input_ids)
-        while i < max_seq_length:
+        while len(input_ids) < max_seq_length:
             input_ids.append(0)
             input_mask.append(0)
             segment_ids.append(0)
-            shuffle_index.append(i)
-            i += 1
+            shuffle_index.append(0)
+            seq_ids.append(0)
 
         assert len(input_ids) == max_seq_length
         assert len(input_mask) == max_seq_length
@@ -461,15 +478,11 @@ def write_instance(instances, writer, max_seq_length, tokenizer):
         features["input_mask"] = create_int_feature(input_mask)
         features["segment_ids"] = create_int_feature(segment_ids)
         features["shuffle_index"] = create_int_feature(shuffle_index)
-        features["masked_lm_positions"] = create_int_feature(
-            masked_lm_positions)
+        features["seq_ids"] = create_int_feature(seq_ids)
+        features["masked_lm_positions"] = create_int_feature(masked_lm_positions)
         features["masked_lm_ids"] = create_int_feature(masked_lm_ids)
         features["masked_lm_weights"] = create_float_feature(masked_lm_weights)
-        # Note: We keep this feature name `next_sentence_labels` to be compatible
-        # with the original data created by lanzhzh@. However, in the ALBERT case
-        # it does contain sentence_order_label.
-        features["next_sentence_labels"] = create_int_feature(
-            [sentence_order_label])
+        features["next_sentence_labels"] = create_int_feature([sentence_order_label])
 
         tf_example = tf.train.Example(
             features=tf.train.Features(feature=features))
@@ -491,13 +504,15 @@ def write_instance(instances, writer, max_seq_length, tokenizer):
 
 
 def main(_):
+    tf.logging.set_verbosity(tf.logging.INFO)
+
     input_files = os.listdir(FLAGS.input_file)
     input_files = [os.path.join(FLAGS.input_file, f) for f in input_files]
 
     pool = multiprocessing.Pool(FLAGS.num_thread)
-    tokenizer = tokenization.FullTokenizer(
-        vocab_file=FLAGS.vocab_file, do_lower_case=FLAGS.do_lower_case,
-        spm_model_file=FLAGS.spm_model_file)
+    # tokenizer = tokenization.FullTokenizer(
+    #     vocab_file=FLAGS.vocab_file, do_lower_case=FLAGS.do_lower_case,
+    #     spm_model_file=FLAGS.spm_model_file)
 
     writers = []
     for i in range(FLAGS.writer_num):
@@ -505,28 +520,36 @@ def main(_):
             FLAGS.output_file, "example_{}.tfrecord".format(i))))
     writers_id = 0
 
-    count = 0
-    for docs in get_docs(input_files, FLAGS.num_docs_pre_yield, tokenizer):
-        rng.shuffle(docs)
+    count_instances = 0
+    count_docs = 0
+    for docs in get_docs(input_files, FLAGS.num_docs_pre_yield):
+        count_docs += FLAGS.num_docs_pre_yield
+        if count_docs <= 25000:
+            continue
+        tf.logging.info("already read {} docs".format(count_docs))
         # docs = [(i, docs) for i in range(len(docs))]
         for _ in range(FLAGS.dupe_factor):
+            rng.shuffle(docs)
             for instances in pool.imap(create_instances, docs):
                 n = write_instance(
-                    instances, writers[writers_id], FLAGS.max_seq_length, tokenizer)
+                    instances, writers[writers_id], FLAGS.max_seq_length)
+                count_instances += n
                 writers_id = (writers_id + 1) % len(writers)
-                count += n
-
             # for d in docs:
             #     instances = create_instances(d)
             #     n = write_instance(instances, writers[writers_id], FLAGS.max_seq_length, tokenizer)
             #     writers_id = (writers_id + 1) % len(writers)
             #     count += n
 
-            tf.logging.info("already write {} instances".format(count))
+            tf.logging.info("already write {} instances".format(count_instances))
+
+        if count_instances > 950000:
+            break
 
 
 if __name__ == "__main__":
     flags.mark_flag_as_required("input_file")
     flags.mark_flag_as_required("output_file")
     flags.mark_flag_as_required("vocab_file")
+
     tf.app.run()

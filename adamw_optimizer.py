@@ -115,16 +115,26 @@ class AdamOptimizer(optimizer.Optimizer):
             self._weight_decay_rate_t, var.dtype.base_dtype)
         epsilon_t = math_ops.cast(self._epsilon_t, var.dtype.base_dtype)
 
+        beta1_power, beta2_power = self._get_beta_accumulators()
+        beta1_power = math_ops.cast(beta1_power, var.dtype.base_dtype)
+        beta2_power = math_ops.cast(beta2_power, var.dtype.base_dtype)
+
+        lr = (lr_t * math_ops.sqrt(1 - beta2_power) / (1 - beta1_power))
         m = self.get_slot(var, "adam_m")
         v = self.get_slot(var, "adam_v")
         m_t = (tf.multiply(beta1_t, m) + tf.multiply(1.0 - beta1_t, grad))
-        v_t = (tf.multiply(beta2_t, v) +
-               tf.multiply(1.0 - beta2_t, tf.square(grad)))
-        update = m_t / (tf.sqrt(v_t) + epsilon_t)
+        m_t = m.assign(m_t, use_locking=self._use_locking)
+        v_t = (tf.multiply(beta2_t, v) + tf.multiply(1.0 - beta2_t, tf.square(grad)))
+        v_t = v.assign(v_t, use_locking=self._use_locking)
+
+        m_t_hat = m_t / (1. - beta1_power)
+        v_t_hat = v_t / (1. - beta2_power)
+        update = m_t_hat / (tf.sqrt(v_t_hat) + epsilon_t)
 
         if self._do_use_weight_decay(var.name):
             update += weight_decay_rate * var
-        var_update = var - lr_t * update
+        var_update = var - lr * update
+        var_update = var.assign(var_update, use_locking=self._use_locking)
 
         return tf.group(*[var_update, m_t, v_t])
 
@@ -136,24 +146,37 @@ class AdamOptimizer(optimizer.Optimizer):
             self._weight_decay_rate_t, var.dtype.base_dtype)
         epsilon_t = math_ops.cast(self._epsilon_t, var.dtype.base_dtype)
 
+        beta1_power, beta2_power = self._get_beta_accumulators()
+        beta1_power = math_ops.cast(beta1_power, var.dtype.base_dtype)
+        beta2_power = math_ops.cast(beta2_power, var.dtype.base_dtype)
+
+        lr = (lr_t * math_ops.sqrt(1 - beta2_power) / (1 - beta1_power))
         m = self.get_slot(var, "adam_m")
         v = self.get_slot(var, "adam_v")
         m_t = (tf.multiply(beta1_t, m) + tf.multiply(1.0 - beta1_t, grad))
-        v_t = (tf.multiply(beta2_t, v) +
-               tf.multiply(1.0 - beta2_t, tf.square(grad)))
-        update = m_t / (tf.sqrt(v_t) + epsilon_t)
+        m_t = m.assign(m_t, use_locking=self._use_locking)
+        v_t = (tf.multiply(beta2_t, v) + tf.multiply(1.0 - beta2_t, tf.square(grad)))
+        v_t = v.assign(v_t, use_locking=self._use_locking)
+
+        m_t_hat = m_t / (1. - beta1_power)
+        v_t_hat = v_t / (1. - beta2_power)
+        update = m_t_hat / (tf.sqrt(v_t_hat) + epsilon_t)
 
         if self._do_use_weight_decay(var.name):
             update += weight_decay_rate * var
-        var_update = var - lr_t * update
-
-        return control_flow_ops.group(*[var_update, m_t, v_t])
+        var_update = var - lr * update
+        var_update = var.assign(var_update, use_locking=self._use_locking)
+        return tf.group(*[var_update, m_t, v_t])
 
     def _apply_sparse_shared(self, grad, var, indices, scatter_add):
+        beta1_power, beta2_power = self._get_beta_accumulators()
+        beta1_power = math_ops.cast(beta1_power, var.dtype.base_dtype)
+        beta2_power = math_ops.cast(beta2_power, var.dtype.base_dtype)
         lr_t = math_ops.cast(self._lr_t, var.dtype.base_dtype)
         beta1_t = math_ops.cast(self._beta1_t, var.dtype.base_dtype)
         beta2_t = math_ops.cast(self._beta2_t, var.dtype.base_dtype)
         epsilon_t = math_ops.cast(self._epsilon_t, var.dtype.base_dtype)
+        lr = (lr_t * math_ops.sqrt(1 - beta2_power) / (1 - beta1_power))
         # m_t = beta1 * m + (1 - beta1) * g_t
         m = self.get_slot(var, "adam_m")
         m_scaled_g_values = grad * (1 - beta1_t)
@@ -168,7 +191,7 @@ class AdamOptimizer(optimizer.Optimizer):
             v_t = scatter_add(v, indices, v_scaled_g_values)
         v_sqrt = math_ops.sqrt(v_t)
         var_update = state_ops.assign_sub(
-            var, lr_t * m_t / (v_sqrt + epsilon_t), use_locking=self._use_locking)
+            var, lr * m_t / (v_sqrt + epsilon_t), use_locking=self._use_locking)
         return control_flow_ops.group(*[var_update, m_t, v_t])
 
     def _apply_sparse(self, grad, var):
@@ -207,9 +230,9 @@ class AdamOptimizer(optimizer.Optimizer):
         """Whether to use L2 weight decay for `param_name`."""
         if not self._weight_decay_rate:
             return False
-        for r in self._include_in_weight_decay:
-            if re.search(r, param_name) is not None:
-                return True
+        # for r in self._include_in_weight_decay:
+        #     if re.search(r, param_name) is not None:
+        #         return True
 
         if self._exclude_from_weight_decay:
             for r in self._exclude_from_weight_decay:

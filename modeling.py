@@ -69,6 +69,7 @@ class Model:
                  is_training,
                  input_ids,
                  input_mask=None,
+                 seq_type_ids=None,
                  token_type_ids=None,
                  use_one_hot_embeddings=False,
                  scope=None):
@@ -103,7 +104,9 @@ class Model:
                 self.embedding_output = embedding_postprocessor(
                     input_tensor=self.word_embedding_output,
                     use_token_type=True,
+                    seq_type_ids=seq_type_ids,
                     token_type_ids=token_type_ids,
+                    seq_type_embedding_name="seq_type_embeddings",
                     token_type_vocab_size=config.type_vocab_size,
                     token_type_embedding_name='token_type_embeddings',
                     use_position_embeddings=True,
@@ -194,7 +197,9 @@ def embedding_lookup(input_ids,
 
 def embedding_postprocessor(input_tensor,
                             use_token_type=False,
+                            seq_type_ids=None,
                             token_type_ids=None,
+                            seq_type_embedding_name="seq_type_embeddings",
                             token_type_vocab_size=16,
                             token_type_embedding_name="token_type_embeddings",
                             use_position_embeddings=True,
@@ -231,6 +236,15 @@ def embedding_postprocessor(input_tensor,
             token_type_embeddings = tf.nn.embedding_lookup(token_type_table,
                                                            token_type_ids)
         output += token_type_embeddings
+
+    if seq_type_ids is not None:
+        seq_type_table = tf.get_variable(
+            name=seq_type_embedding_name,
+            shape=[seq_length, width],
+            initializer=create_initializer(initializer_range))
+        seq_type_embeddings = tf.nn.embedding_lookup(seq_type_table,
+                                                     token_type_ids)
+        output += seq_type_embeddings
 
     if use_position_embeddings:
         assert_op = tf.assert_less_equal(seq_length, max_position_embeddings)
@@ -401,8 +415,7 @@ def attention_ffn_block(layer_input,
                         intermediate_size=3072,
                         intermediate_act_fn=None,
                         initializer_range=0.02,
-                        hidden_dropout_prob=0.0,
-                        use_einsum=True):
+                        hidden_dropout_prob=0.0):
     with tf.variable_scope("attention_1"):
         with tf.variable_scope("self"):
             attention_output = attention_layer(
@@ -411,8 +424,7 @@ def attention_ffn_block(layer_input,
                 attention_mask=attention_mask,
                 num_attention_heads=num_attention_heads,
                 attention_probs_dropout_prob=attention_probs_dropout_prob,
-                initializer_range=initializer_range,
-                use_einsum=use_einsum)
+                initializer_range=initializer_range)
 
         # Run a linear projection of `hidden_size` then add a residual
         # with `layer_input`.
